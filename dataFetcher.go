@@ -42,17 +42,24 @@ func getCorpus() []doc {
 	return corpus
 }
 
-
-func getTokenizedCorpus(corpus []doc) (map[int][]string, float64) {
+func getTokenizedCorpus(corpus []doc) (map[int][]string, float64, map[string][]int) {
 	tokenizedCorpus := make(map[int][]string)
 	totalDocsLength := 0
+	invertedIndex := make(map[string][]int)
 
-	for _, d := range corpus {
-		tokens := getTokenizedText(d.text)
-		tokenizedCorpus[d.id] = tokens
+	for _, doc := range corpus {
+		tokens := getTokenizedText(doc.text)
+		populateInvertedIndex(&invertedIndex, tokens, doc.id)
+		tokenizedCorpus[doc.id] = tokens
 		totalDocsLength += len(tokens)
 	}
 
 	avgDocsLength := float64(totalDocsLength) / float64(len(corpus))
-	return tokenizedCorpus, avgDocsLength
+	return tokenizedCorpus, avgDocsLength, invertedIndex
+}
+
+func populateInvertedIndex(invertedIndex *map[string][]int, tokens []string, docID int) {
+	for _, token := range tokens {
+		(*invertedIndex)[token] = append((*invertedIndex)[token], docID)
+	}
 }
