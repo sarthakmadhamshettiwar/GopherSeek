@@ -39,7 +39,7 @@ func getDocumentScoresByIdParallel(query string, tokenizedCorpus map[int][]strin
 		}(i)
 	}
 
-	func() {
+	go func() {
 		wg.Wait()
 		close(resultsChan)
 	}()
