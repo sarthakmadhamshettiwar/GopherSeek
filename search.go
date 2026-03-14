@@ -28,24 +28,25 @@ func getDocumentScoresByIdParallel(query string, tokenizedCorpus map[int][]strin
 				end = totalDocs
 			}
 
-			// Create a LOCAL map for this worker
-			localScores := make(map[int]float64)
+			// Pre-allocate the slice for this chunk to avoid resizing
+			localScores := make([]scoreResult, 0, chunkSize)
 			for id := start; id < end; id++ {
-				localScores[id] = computeRelevanceScore(query, tokenizedCorpus[id], invertedIndex, totalDocs, avgDocsLength)
+				score := computeRelevanceScore(query, tokenizedCorpus[id], invertedIndex, totalDocs, avgDocsLength)
+				localScores = append(localScores, scoreResult{id: id, score: score})
 			}
-			// Send the WHOLE chunk result once
+
 			resultsChan <- localScores
 		}(i)
 	}
 
-	go func() {
+	func() {
 		wg.Wait()
 		close(resultsChan)
 	}()
 
 	for res := range resultsChan {
-		for id, score := range res {
-			scores[id] = score
+		for _, result := range res {
+			scores[result.id] = result.score
 		}
 	}
 	return scores

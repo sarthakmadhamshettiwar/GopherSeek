@@ -15,6 +15,10 @@ type scorePair struct {
 	text  string
 }
 
+type scoreResult struct {
+	id    int
+	score float64
+}
 
 func getTokenizedText(text string) []string {
 	// Split the text into tokens (words)
