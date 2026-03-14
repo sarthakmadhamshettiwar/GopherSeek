@@ -12,34 +12,37 @@ import (
 func getDocumentScoresByIdParallel(query string, tokenizedCorpus map[int][]string, invertedIndex map[string][]int, avgDocsLength float64) map[int]float64 {
 	scores := make(map[int]float64)
 	totalDocs := len(tokenizedCorpus)
-
-	// Parallel computation of relevancy score setup
 	numWorkers := runtime.NumCPU()
-	chunkSize := (totalDocs + numWorkers - 1) / numWorkers // need to take a ceil
+	chunkSize := (totalDocs + numWorkers - 1) / numWorkers
+
+	resultsChan := make(chan map[int]float64, numWorkers)
 	var wg sync.WaitGroup
-	resultsChan := make(chan map[int]float64, numWorkers) // All the results from workers will be sent to this channel
 
 	for i := 0; i < numWorkers; i++ {
-		start := i * chunkSize
-		end := start + chunkSize
-		if end > totalDocs {
-			end = totalDocs
-		}
 		wg.Add(1)
-		go func() {
+		go func(workerIdx int) {
 			defer wg.Done()
-			for id := start; id < end; id++ {
-				resultsChan <- map[int]float64{id: computeRelevanceScore(query, tokenizedCorpus[id], invertedIndex, totalDocs, avgDocsLength)}
+			start := workerIdx * chunkSize
+			end := start + chunkSize
+			if end > totalDocs {
+				end = totalDocs
 			}
-		}()
+
+			// Create a LOCAL map for this worker
+			localScores := make(map[int]float64)
+			for id := start; id < end; id++ {
+				localScores[id] = computeRelevanceScore(query, tokenizedCorpus[id], invertedIndex, totalDocs, avgDocsLength)
+			}
+			// Send the WHOLE chunk result once
+			resultsChan <- localScores
+		}(i)
 	}
 
-	func() {
+	go func() {
 		wg.Wait()
 		close(resultsChan)
 	}()
 
-	// Collect results from channel
 	for res := range resultsChan {
 		for id, score := range res {
 			scores[id] = score
