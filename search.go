@@ -3,11 +3,52 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"runtime"
 	"sort"
 	"strings"
+	"sync"
 )
 
-func getDocumentScoresById(query string, tokenizedCorpus map[int][]string, invertedIndex map[string][]int, avgDocsLength float64) map[int]float64 {
+func getDocumentScoresByIdParallel(query string, tokenizedCorpus map[int][]string, invertedIndex map[string][]int, avgDocsLength float64) map[int]float64 {
+	scores := make(map[int]float64)
+	totalDocs := len(tokenizedCorpus)
+
+	// Parallel computation of relevancy score setup
+	numWorkers := runtime.NumCPU()
+	chunkSize := (totalDocs + numWorkers - 1) / numWorkers // need to take a ceil
+	var wg sync.WaitGroup
+	resultsChan := make(chan map[int]float64, numWorkers) // All the results from workers will be sent to this channel
+
+	for i := 0; i < numWorkers; i++ {
+		start := i * chunkSize
+		end := start + chunkSize
+		if end > totalDocs {
+			end = totalDocs
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for id := start; id < end; id++ {
+				resultsChan <- map[int]float64{id: computeRelevanceScore(query, tokenizedCorpus[id], invertedIndex, totalDocs, avgDocsLength)}
+			}
+		}()
+	}
+
+	func() {
+		wg.Wait()
+		close(resultsChan)
+	}()
+
+	// Collect results from channel
+	for res := range resultsChan {
+		for id, score := range res {
+			scores[id] = score
+		}
+	}
+	return scores
+}
+
+func getDocumentScoresByIdSequential(query string, tokenizedCorpus map[int][]string, invertedIndex map[string][]int, avgDocsLength float64) map[int]float64 {
 	scores := make(map[int]float64)
 	totalDocs := len(tokenizedCorpus)
 	for id := range tokenizedCorpus {
@@ -18,7 +59,7 @@ func getDocumentScoresById(query string, tokenizedCorpus map[int][]string, inver
 
 func getTopSearchResults(query string, tokenizedCorpus map[int][]string, invertedIndex map[string][]int, avgDocsLength float64, topN int, thresholdScore float64) []scorePair {
 
-	scoresByIds := getDocumentScoresById(query, tokenizedCorpus, invertedIndex, avgDocsLength)
+	scoresByIds := getDocumentScoresByIdSequential(query, tokenizedCorpus, invertedIndex, avgDocsLength)
 
 	// Sort the document IDs by their scores
 	var scoredDocs []scorePair
