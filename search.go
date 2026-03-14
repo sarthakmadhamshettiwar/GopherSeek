@@ -15,7 +15,7 @@ func getDocumentScoresByIdParallel(query string, tokenizedCorpus map[int][]strin
 	numWorkers := runtime.NumCPU()
 	chunkSize := (totalDocs + numWorkers - 1) / numWorkers
 
-	resultsChan := make(chan map[int]float64, numWorkers)
+	resultsChan := make(chan []scoreResult)
 	var wg sync.WaitGroup
 
 	for i := 0; i < numWorkers; i++ {
@@ -63,7 +63,7 @@ func getDocumentScoresByIdSequential(query string, tokenizedCorpus map[int][]str
 
 func getTopSearchResults(query string, tokenizedCorpus map[int][]string, invertedIndex map[string][]int, avgDocsLength float64, topN int, thresholdScore float64) []scorePair {
 
-	scoresByIds := getDocumentScoresByIdSequential(query, tokenizedCorpus, invertedIndex, avgDocsLength)
+	scoresByIds := getDocumentScoresByIdParallel(query, tokenizedCorpus, invertedIndex, avgDocsLength)
 
 	// Sort the document IDs by their scores
 	var scoredDocs []scorePair
