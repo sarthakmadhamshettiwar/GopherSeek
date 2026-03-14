@@ -7,17 +7,18 @@ import (
 	"strings"
 )
 
-func getDocumentScoresById(query string, tokenizedCorpus map[int][]string, avgDocsLength float64) map[int]float64 {
+func getDocumentScoresById(query string, tokenizedCorpus map[int][]string, invertedIndex map[string][]int, avgDocsLength float64) map[int]float64 {
 	scores := make(map[int]float64)
+	totalDocs := len(tokenizedCorpus)
 	for id := range tokenizedCorpus {
-		scores[id] = computeRelevanceScore(query, tokenizedCorpus[id], tokenizedCorpus, avgDocsLength)
+		scores[id] = computeRelevanceScore(query, tokenizedCorpus[id], invertedIndex, totalDocs, avgDocsLength)
 	}
 	return scores
 }
 
-func getTopSearchResults(query string, tokenizedCorpus map[int][]string, avgDocsLength float64, topN int, thresholdScore float64) []scorePair {
+func getTopSearchResults(query string, tokenizedCorpus map[int][]string, invertedIndex map[string][]int, avgDocsLength float64, topN int, thresholdScore float64) []scorePair {
 
-	scoresByIds := getDocumentScoresById(query, tokenizedCorpus, avgDocsLength)
+	scoresByIds := getDocumentScoresById(query, tokenizedCorpus, invertedIndex, avgDocsLength)
 
 	// Sort the document IDs by their scores
 	var scoredDocs []scorePair
@@ -37,14 +38,14 @@ func getTopSearchResults(query string, tokenizedCorpus map[int][]string, avgDocs
 	return topDocs
 }
 
-func searchHandler(tokenizedCorpus map[int][]string, avgDocsLength float64) http.HandlerFunc {
+func searchHandler(tokenizedCorpus map[int][]string, avgDocsLength float64, invertedIndex map[string][]int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		params := r.URL.Query()
 		query := params["query"]
 
 		fmt.Printf("Received search query: %v\n", query)
 
-		topSearchResults := getTopSearchResults(query[0], tokenizedCorpus, avgDocsLength, 10, 0)
+		topSearchResults := getTopSearchResults(query[0], tokenizedCorpus, invertedIndex, avgDocsLength, 10, 0)
 		fmt.Fprintf(w, "Search results for: %v\n", query)
 		for _, res := range topSearchResults {
 			fmt.Fprintf(w, "%v\n", res)
@@ -52,9 +53,9 @@ func searchHandler(tokenizedCorpus map[int][]string, avgDocsLength float64) http
 	}
 }
 func main() {
-	tokenizedCorpus, avgDocsLength := getTokenizedCorpus(getCorpus())
+	tokenizedCorpus, avgDocsLength, invertedIndex := getTokenizedCorpus(getCorpus())
 
-	http.HandleFunc("/search", searchHandler(tokenizedCorpus, avgDocsLength))
+	http.HandleFunc("/search", searchHandler(tokenizedCorpus, avgDocsLength, invertedIndex))
 	fmt.Println("Server is starting!")
 	err := http.ListenAndServe(":8080", nil)
 

@@ -4,29 +4,20 @@ import (
 	"math"
 )
 
-func getIDFForToken(token string, tokenizedCorpus map[int][]string) float64 {
-	totalDocs := len(tokenizedCorpus)
-	docsWithToken := 0
-	for _, tokens := range tokenizedCorpus {
-		for _, t := range tokens {
-			if t == token {
-				docsWithToken++
-				break
-			}
-		}
-	}
+func getIDFForToken(queryToken string, invertedIndex map[string][]int, totalDocs int) float64 {
+
+	docsWithToken := len(invertedIndex[queryToken])
 	if docsWithToken == 0 {
 		return 0
 	}
-
 	return math.Log((float64(totalDocs) - float64(docsWithToken) + 0.5) / (float64(docsWithToken) + 0.5))
 }
 
-func getIDFForQuery(query string, tokenizedCorpus map[int][]string) float64 {
-	tokens := getTokenizedText(query)
+func getIDFForQuery(query string, invertedIndex map[string][]int, totalDocs int) float64 {
+	tokenizedQuery := getTokenizedText(query) // ['nike', 'shoes']
 	idf := 0.0
-	for _, token := range tokens {
-		idf += getIDFForToken(token, tokenizedCorpus)
+	for _, token := range tokenizedQuery {
+		idf += getIDFForToken(token, invertedIndex, totalDocs)
 	}
 	return idf
 }
@@ -56,9 +47,9 @@ func getTFForQuery(query string, docTokens []string, avgDocsLength float64) floa
 	return (tf * (k + 1)) / (tf + (k * (1 - b + b*float64(currentDocLen)/avgDocsLength)))
 }
 
-// Finds how relevant is query for a given document by calculating the TF-IDF score
-func computeRelevanceScore(query string, docTokens []string, tokenizedCorpus map[int][]string, avgDocsLength float64) float64 {
-	idf := getIDFForQuery(query, tokenizedCorpus)
+// Calculate the relevancy of a document for a given query
+func computeRelevanceScore(query string, docTokens []string, invertedIndex map[string][]int, totalDocs int, avgDocsLength float64) float64 {
+	idf := getIDFForQuery(query, invertedIndex, totalDocs)
 	tf := getTFForQuery(query, docTokens, avgDocsLength)
 	return tf * idf
 }
