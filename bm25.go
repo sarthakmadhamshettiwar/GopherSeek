@@ -19,9 +19,7 @@ func getIDFForToken(token string, tokenizedCorpus map[int][]string) float64 {
 		return 0
 	}
 
-	probabilityOfTokenInRandomDoc := float64(docsWithToken) / float64(totalDocs)
-
-	return -math.Log(probabilityOfTokenInRandomDoc)
+	return math.Log((float64(totalDocs) - float64(docsWithToken) + 0.5) / (float64(docsWithToken) + 0.5))
 }
 
 func getIDFForQuery(query string, tokenizedCorpus map[int][]string) float64 {
