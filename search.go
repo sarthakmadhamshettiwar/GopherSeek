@@ -7,17 +7,17 @@ import (
 	"strings"
 )
 
-func getDocumentScoresById(query string, tokenizedCorpus map[int][]string) map[int]float64 {
+func getDocumentScoresById(query string, tokenizedCorpus map[int][]string, avgDocsLength float64) map[int]float64 {
 	scores := make(map[int]float64)
 	for id := range tokenizedCorpus {
-		scores[id] = computeRelevanceScore(query, tokenizedCorpus[id], tokenizedCorpus)
+		scores[id] = computeRelevanceScore(query, tokenizedCorpus[id], tokenizedCorpus, avgDocsLength)
 	}
 	return scores
 }
 
 func getTopSearchResults(query string, topN int, thresholdScore float64) []scorePair {
-	tokenizedCorpus := getTokenizedCorpus(getCorpus())
-	scoresByIds := getDocumentScoresById(query, tokenizedCorpus)
+	tokenizedCorpus, avgDocsLength := getTokenizedCorpus(getCorpus())
+	scoresByIds := getDocumentScoresById(query, tokenizedCorpus, avgDocsLength)
 
 	// Sort the document IDs by their scores
 

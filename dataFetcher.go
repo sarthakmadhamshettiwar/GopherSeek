@@ -42,10 +42,17 @@ func getCorpus() []doc {
 	return corpus
 }
 
-func getTokenizedCorpus(corpus []doc) map[int][]string {
+
+func getTokenizedCorpus(corpus []doc) (map[int][]string, float64) {
 	tokenizedCorpus := make(map[int][]string)
-	for _, doc := range corpus {
-		tokenizedCorpus[doc.id] = getTokenizedText(doc.text)
+	totalDocsLength := 0
+
+	for _, d := range corpus {
+		tokens := getTokenizedText(d.text)
+		tokenizedCorpus[d.id] = tokens
+		totalDocsLength += len(tokens)
 	}
-	return tokenizedCorpus
+
+	avgDocsLength := float64(totalDocsLength) / float64(len(corpus))
+	return tokenizedCorpus, avgDocsLength
 }
