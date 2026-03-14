@@ -15,7 +15,7 @@ func getDocumentScoresByIdParallel(query string, tokenizedCorpus map[int][]strin
 	numWorkers := runtime.NumCPU()
 	chunkSize := (totalDocs + numWorkers - 1) / numWorkers
 
-	resultsChan := make(chan map[int]float64, numWorkers)
+	resultsChan := make(chan []scoreResult, numWorkers)
 	var wg sync.WaitGroup
 
 	for i := 0; i < numWorkers; i++ {
