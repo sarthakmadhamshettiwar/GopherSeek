@@ -97,10 +97,24 @@ func searchHandler(tokenizedCorpus map[int][]string, avgDocsLength float64, inve
 		}
 	}
 }
-func main() {
-	tokenizedCorpus, avgDocsLength, invertedIndex := getTokenizedCorpus(getCorpus())
 
+func invertedIndexHandler(invertedIndex map[string][]int) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "Inverted Index:\n")
+		for term, docIDs := range invertedIndex {
+			fmt.Fprintf(w, "  %s: %v\n", term, docIDs)
+		}
+	}
+}
+
+func main() {
+	tokenizedCorpus, avgDocsLength, invertedIndex := getTokenizedCorpus(getCorpus("db"))
+
+	// search endpoint
 	http.HandleFunc("/search", searchHandler(tokenizedCorpus, avgDocsLength, invertedIndex))
+
+	// get the inverted index (for debugging)
+	http.HandleFunc("/inverted-index", invertedIndexHandler(invertedIndex))
 	fmt.Println("Server is starting!")
 	err := http.ListenAndServe(":8080", nil)
 
