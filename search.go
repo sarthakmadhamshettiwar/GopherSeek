@@ -108,7 +108,7 @@ func invertedIndexHandler(invertedIndex map[string][]int) http.HandlerFunc {
 }
 
 func main() {
-	tokenizedCorpus, avgDocsLength, invertedIndex := getTokenizedCorpus(getCorpus())
+	tokenizedCorpus, avgDocsLength, invertedIndex := getTokenizedCorpus(getCorpus("db"))
 
 	// search endpoint
 	http.HandleFunc("/search", searchHandler(tokenizedCorpus, avgDocsLength, invertedIndex))

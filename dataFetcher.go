@@ -1,13 +1,18 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/joho/godotenv"
 )
 
 // all the data fetching logic will reside in this file. Whether it is from DB or from a mocked file
-func getCorpus() []doc {
+
+func getCorpusFromFile() []doc {
 	file, err := os.ReadFile("corpus.json")
 	if err != nil {
 		fmt.Printf("Error reading file: %v\n", err)
@@ -40,6 +45,63 @@ func getCorpus() []doc {
 	}
 
 	return corpus
+}
+
+func getCorpusFromDB() []doc {
+	err := godotenv.Load()
+
+	if err != nil {
+		fmt.Printf("Error loading .env file: %v\n", err)
+		return []doc{}
+	}
+
+	ctx := context.Background()
+	connString := os.Getenv("DOCS_DATABASE_URL")
+	if connString == "" {
+		fmt.Fprintf(os.Stderr, "DOCS_DATABASE_URL not set\n")
+		os.Exit(1)
+	}
+
+	conn, err := pgx.Connect(ctx, connString)
+	if err != nil {
+		fmt.Printf("Unable to connect to database: %v\n", err)
+		return []doc{}
+	}
+
+	// Fetch all the documents from the table
+
+	allDocs, err := conn.Query(ctx, "SELECT id, text FROM docs;")
+	if err != nil {
+		fmt.Printf("Error fetching documents: %v\n", err)
+		return []doc{}
+	}
+
+	defer allDocs.Close()
+	var corpus []doc
+	for allDocs.Next() {
+		var d doc
+		err := allDocs.Scan(&d.id, &d.text)
+		if err != nil {
+			fmt.Printf("Error scanning row: %v\n", err)
+			return []doc{}
+		}
+		corpus = append(corpus, d)
+		fmt.Printf("Fetched doc ID: %s\n", d.text) // Debugging log to confirm data retrieval
+	}
+
+	return corpus
+}
+
+func getCorpus(source string) []doc {
+	switch source {
+	case "db":
+		return getCorpusFromDB()
+	case "file":
+		return getCorpusFromFile()
+	}
+
+	fmt.Printf("Unknown corpus source: %s\n", source)
+	return nil
 }
 
 func getTokenizedCorpus(corpus []doc) (map[int][]string, float64, map[string][]int) {
