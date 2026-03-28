@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"runtime"
@@ -68,33 +69,33 @@ func getTopSearchResults(query string, tokenizedCorpus map[int][]string, inverte
 	// Sort the document IDs by their scores
 	var scoredDocs []scorePair
 	for id, score := range scoresByIds {
-		scoredDocs = append(scoredDocs, scorePair{id: id, score: score, text: strings.Join(tokenizedCorpus[id], " ")})
+		scoredDocs = append(scoredDocs, scorePair{Id: id, Score: score, Text: strings.Join(tokenizedCorpus[id], " ")})
 	}
 
 	sort.Slice(scoredDocs, func(i, j int) bool {
-		return scoredDocs[i].score > scoredDocs[j].score
+		return scoredDocs[i].Score > scoredDocs[j].Score
 	})
 
 	// Get the top N document IDs
 	var topDocs []scorePair
-	for i := 0; i < topN && i < len(scoredDocs) && scoredDocs[i].score > thresholdScore; i++ {
-		topDocs = append(topDocs, scorePair{id: scoredDocs[i].id, score: scoredDocs[i].score, text: scoredDocs[i].text})
+	for i := 0; i < topN && i < len(scoredDocs) && scoredDocs[i].Score > thresholdScore; i++ {
+		topDocs = append(topDocs, scorePair{Id: scoredDocs[i].Id, Score: scoredDocs[i].Score, Text: scoredDocs[i].Text})
 	}
 	return topDocs
 }
 
 func searchHandler(tokenizedCorpus map[int][]string, avgDocsLength float64, invertedIndex map[string][]int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Content-Type", "application/json")
+
 		params := r.URL.Query()
 		query := params["query"]
 
 		fmt.Printf("Received search query: %v\n", query)
 
 		topSearchResults := getTopSearchResults(query[0], tokenizedCorpus, invertedIndex, avgDocsLength, 10, 0)
-		fmt.Fprintf(w, "Search results for: %v\n", query)
-		for _, res := range topSearchResults {
-			fmt.Fprintf(w, "%v\n", res)
-		}
+		json.NewEncoder(w).Encode(topSearchResults)
 	}
 }
 

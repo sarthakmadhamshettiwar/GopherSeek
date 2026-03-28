@@ -10,9 +10,9 @@ type doc struct {
 }
 
 type scorePair struct {
-	id    int
-	score float64
-	text  string
+	Id    int     `json:"id"`
+	Score float64 `json:"score"`
+	Text  string  `json:"text"`
 }
 
 type scoreResult struct {
