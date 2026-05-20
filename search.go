@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"runtime"
 	"sort"
 	"strconv"
@@ -144,62 +145,54 @@ func getTopSearchResults(gq GeoQuery, tokenizedCorpus map[int][]string, inverted
 	return results
 }
 
+func parseGeoQuery(params url.Values) (GeoQuery, error) {
+	queryText := params.Get("query")
+	if queryText == "" {
+		return GeoQuery{}, fmt.Errorf("query is required")
+	}
+
+	latStr, longStr := params.Get("lat"), params.Get("long")
+	if latStr == "" || longStr == "" {
+		return GeoQuery{}, fmt.Errorf("lat and long are required")
+	}
+
+	userLat, err := strconv.ParseFloat(latStr, 64)
+	if err != nil {
+		return GeoQuery{}, fmt.Errorf("invalid lat")
+	}
+	userLong, err := strconv.ParseFloat(longStr, 64)
+	if err != nil {
+		return GeoQuery{}, fmt.Errorf("invalid long")
+	}
+
+	radiusKm := 0.0
+	if rs := params.Get("radius"); rs != "" {
+		if radiusKm, err = strconv.ParseFloat(rs, 64); err != nil {
+			return GeoQuery{}, fmt.Errorf("invalid radius")
+		}
+	}
+
+	topK := 10
+	if ks := params.Get("k"); ks != "" {
+		if parsed, err := strconv.Atoi(ks); err == nil && parsed > 0 {
+			topK = parsed
+		}
+	}
+
+	sortBy := "relevancy"
+	if params.Get("sort") == "distance" {
+		sortBy = "distance"
+	}
+
+	return GeoQuery{Text: queryText, UserLat: userLat, UserLong: userLong, RadiusKm: radiusKm, TopK: topK, SortBy: sortBy}, nil
+}
+
 func searchHandler(tokenizedCorpus map[int][]string, avgDocsLength float64, invertedIndex map[string][]int, locationIndex map[int]docMeta, geohashIndex map[string][]int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		params := r.URL.Query()
-
-		queryText := params.Get("query")
-		if queryText == "" {
-			http.Error(w, "query is required", http.StatusBadRequest)
-			return
-		}
-
-		latStr := params.Get("lat")
-		longStr := params.Get("long")
-		if latStr == "" || longStr == "" {
-			http.Error(w, "lat and long are required", http.StatusBadRequest)
-			return
-		}
-
-		userLat, err := strconv.ParseFloat(latStr, 64)
+		gq, err := parseGeoQuery(r.URL.Query())
 		if err != nil {
-			http.Error(w, "invalid lat", http.StatusBadRequest)
+			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
-		}
-		userLong, err := strconv.ParseFloat(longStr, 64)
-		if err != nil {
-			http.Error(w, "invalid long", http.StatusBadRequest)
-			return
-		}
-
-		radiusKm := 0.0
-		if rs := params.Get("radius"); rs != "" {
-			radiusKm, err = strconv.ParseFloat(rs, 64)
-			if err != nil {
-				http.Error(w, "invalid radius", http.StatusBadRequest)
-				return
-			}
-		}
-
-		topK := 10
-		if ks := params.Get("k"); ks != "" {
-			if parsed, err := strconv.Atoi(ks); err == nil && parsed > 0 {
-				topK = parsed
-			}
-		}
-
-		sortBy := params.Get("sort")
-		if sortBy != "distance" {
-			sortBy = "relevancy"
-		}
-
-		gq := GeoQuery{
-			Text:     queryText,
-			UserLat:  userLat,
-			UserLong: userLong,
-			RadiusKm: radiusKm,
-			TopK:     topK,
-			SortBy:   sortBy,
 		}
 
 		results := getTopSearchResults(gq, tokenizedCorpus, invertedIndex, avgDocsLength, locationIndex, geohashIndex)
