@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/joho/godotenv"
 )
 
@@ -57,20 +59,40 @@ func getCorpusFromFile() []doc {
 	return corpus
 }
 
-func getCorpusFromDB() []doc {
-	err := godotenv.Load()
-
-	if err != nil {
-		fmt.Printf("Error loading .env file: %v\n", err)
-		return []doc{}
+func loadDBConfig() (context.Context, context.CancelFunc, string, error) {
+	if err := godotenv.Load(); err != nil {
+		return nil, nil, "", fmt.Errorf("error loading .env file: %w", err)
 	}
-
-	ctx := context.Background()
 	connString := os.Getenv("DOCS_DATABASE_URL")
 	if connString == "" {
 		fmt.Fprintf(os.Stderr, "DOCS_DATABASE_URL not set\n")
 		os.Exit(1)
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	return ctx, cancel, connString, nil
+}
+
+func scanCorpusRows(rows pgx.Rows) []doc {
+	defer rows.Close()
+	var corpus []doc
+	for rows.Next() {
+		var d doc
+		if err := rows.Scan(&d.id, &d.name, &d.text, &d.lat, &d.long); err != nil {
+			fmt.Printf("Error scanning row: %v\n", err)
+			return []doc{}
+		}
+		corpus = append(corpus, d)
+	}
+	return corpus
+}
+
+func getCorpusFromDB() []doc {
+	ctx, cancel, connString, err := loadDBConfig()
+	if err != nil {
+		fmt.Println(err)
+		return []doc{}
+	}
+	defer cancel()
 
 	conn, err := pgx.Connect(ctx, connString)
 	if err != nil {
@@ -79,31 +101,43 @@ func getCorpusFromDB() []doc {
 	}
 	defer conn.Close(ctx)
 
-	// Fetch all the documents from the table
-	allDocs, err := conn.Query(ctx, "SELECT id, name, text, lat, long FROM docs;")
+	rows, err := conn.Query(ctx, "SELECT id, name, text, lat, long FROM docs;")
 	if err != nil {
 		fmt.Printf("Error fetching documents: %v\n", err)
 		return []doc{}
 	}
+	return scanCorpusRows(rows)
+}
 
-	defer allDocs.Close()
-	var corpus []doc
-	for allDocs.Next() {
-		var d doc
-		err := allDocs.Scan(&d.id, &d.name, &d.text, &d.lat, &d.long)
-		if err != nil {
-			fmt.Printf("Error scanning row: %v\n", err)
-			return []doc{}
-		}
-		corpus = append(corpus, d)
+func getCorpusFromDBPool() []doc {
+	ctx, cancel, connString, err := loadDBConfig()
+	if err != nil {
+		fmt.Println(err)
+		return []doc{}
 	}
+	defer cancel()
 
-	return corpus
+	pool, err := pgxpool.New(ctx, connString)
+	if err != nil {
+		fmt.Printf("Unable to create connection pool: %v\n", err)
+		return []doc{}
+	}
+	defer pool.Close()
+
+	rows, err := pool.Query(ctx, "SELECT id, name, text, lat, long FROM docs;")
+	if err != nil {
+		fmt.Printf("Error fetching documents: %v\n", err)
+		return []doc{}
+	}
+	return scanCorpusRows(rows)
 }
 
 func getCorpus(source string) []doc {
 	switch source {
 	case "db":
+		if os.Getenv("USE_POOL") == "true" {
+			return getCorpusFromDBPool()
+		}
 		return getCorpusFromDB()
 	case "file":
 		return getCorpusFromFile()
