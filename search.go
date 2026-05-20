@@ -1,21 +1,26 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"runtime"
 	"sort"
-	"strings"
+	"strconv"
 	"sync"
 )
 
-func getDocumentScoresByIdParallel(query string, tokenizedCorpus map[int][]string, invertedIndex map[string][]int, avgDocsLength float64) map[int]float64 {
+func getDocumentScoresByIdParallel(query string, candidateIDs []int, tokenizedCorpus map[int][]string, invertedIndex map[string][]int, avgDocsLength float64) map[int]float64 {
 	scores := make(map[int]float64)
+	n := len(candidateIDs)
+	if n == 0 {
+		return scores
+	}
 	totalDocs := len(tokenizedCorpus)
 	numWorkers := runtime.NumCPU()
-	chunkSize := (totalDocs + numWorkers - 1) / numWorkers
+	chunkSize := (n + numWorkers - 1) / numWorkers
 
-	resultsChan := make(chan []scoreResult)
+	resultsChan := make(chan []scoreResult, numWorkers)
 	var wg sync.WaitGroup
 
 	for i := 0; i < numWorkers; i++ {
@@ -23,14 +28,16 @@ func getDocumentScoresByIdParallel(query string, tokenizedCorpus map[int][]strin
 		go func(workerIdx int) {
 			defer wg.Done()
 			start := workerIdx * chunkSize
-			end := start + chunkSize
-			if end > totalDocs {
-				end = totalDocs
+			if start >= n {
+				resultsChan <- nil
+				return
 			}
-
-			// Pre-allocate the slice for this chunk to avoid resizing
-			localScores := make([]scoreResult, 0, chunkSize)
-			for id := start; id < end; id++ {
+			end := start + chunkSize
+			if end > n {
+				end = n
+			}
+			localScores := make([]scoreResult, 0, end-start)
+			for _, id := range candidateIDs[start:end] {
 				score := computeRelevanceScore(query, tokenizedCorpus[id], invertedIndex, totalDocs, avgDocsLength)
 				localScores = append(localScores, scoreResult{id: id, score: score})
 			}
@@ -52,48 +59,153 @@ func getDocumentScoresByIdParallel(query string, tokenizedCorpus map[int][]strin
 	return scores
 }
 
-func getDocumentScoresByIdSequential(query string, tokenizedCorpus map[int][]string, invertedIndex map[string][]int, avgDocsLength float64) map[int]float64 {
+func getDocumentScoresByIdSequential(query string, candidateIDs []int, tokenizedCorpus map[int][]string, invertedIndex map[string][]int, avgDocsLength float64) map[int]float64 {
 	scores := make(map[int]float64)
 	totalDocs := len(tokenizedCorpus)
-	for id := range tokenizedCorpus {
+	for _, id := range candidateIDs {
 		scores[id] = computeRelevanceScore(query, tokenizedCorpus[id], invertedIndex, totalDocs, avgDocsLength)
 	}
 	return scores
 }
 
-func getTopSearchResults(query string, tokenizedCorpus map[int][]string, invertedIndex map[string][]int, avgDocsLength float64, topN int, thresholdScore float64) []scorePair {
+func getTopSearchResults(gq GeoQuery, tokenizedCorpus map[int][]string, invertedIndex map[string][]int, avgDocsLength float64, locationIndex map[int]docMeta, geohashIndex map[string][]int) []SearchResult {
+	// 1. Geohash pre-filter: collect candidate doc IDs within the neighborhood cells.
+	userHash := encodeGeohash(gq.UserLat, gq.UserLong, geohashPrecision)
+	neighborHashes := geohashNeighbors(userHash)
+	allCells := append(neighborHashes, userHash)
 
-	scoresByIds := getDocumentScoresByIdParallel(query, tokenizedCorpus, invertedIndex, avgDocsLength)
-
-	// Sort the document IDs by their scores
-	var scoredDocs []scorePair
-	for id, score := range scoresByIds {
-		scoredDocs = append(scoredDocs, scorePair{id: id, score: score, text: strings.Join(tokenizedCorpus[id], " ")})
+	candidateSet := make(map[int]struct{})
+	for _, h := range allCells {
+		for _, id := range geohashIndex[h] {
+			candidateSet[id] = struct{}{}
+		}
 	}
 
-	sort.Slice(scoredDocs, func(i, j int) bool {
-		return scoredDocs[i].score > scoredDocs[j].score
+	candidateIDs := make([]int, 0, len(candidateSet))
+	for id := range candidateSet {
+		candidateIDs = append(candidateIDs, id)
+	}
+
+	// 2. BM25 on geo-filtered candidates only.
+	scoresByID := getDocumentScoresByIdParallel(gq.Text, candidateIDs, tokenizedCorpus, invertedIndex, avgDocsLength)
+
+	// 3. Sort by BM25 descending, take top K.
+	type idScore struct {
+		id    int
+		score float64
+	}
+	bm25Results := make([]idScore, 0, len(scoresByID))
+	for id, score := range scoresByID {
+		if score > 0 {
+			bm25Results = append(bm25Results, idScore{id, score})
+		}
+	}
+	sort.Slice(bm25Results, func(i, j int) bool {
+		if bm25Results[i].score != bm25Results[j].score {
+			return bm25Results[i].score > bm25Results[j].score
+		}
+		return bm25Results[i].id < bm25Results[j].id
 	})
-
-	// Get the top N document IDs
-	var topDocs []scorePair
-	for i := 0; i < topN && i < len(scoredDocs) && scoredDocs[i].score > thresholdScore; i++ {
-		topDocs = append(topDocs, scorePair{id: scoredDocs[i].id, score: scoredDocs[i].score, text: scoredDocs[i].text})
+	if len(bm25Results) > gq.TopK {
+		bm25Results = bm25Results[:gq.TopK]
 	}
-	return topDocs
+
+	// 4. Compute Haversine distance; apply optional radius hard-filter.
+	results := make([]SearchResult, 0, len(bm25Results))
+	for _, r := range bm25Results {
+		meta := locationIndex[r.id]
+		distKm := haversineDistance(gq.UserLat, gq.UserLong, meta.lat, meta.long)
+		if gq.RadiusKm > 0 && distKm > gq.RadiusKm {
+			continue
+		}
+		results = append(results, SearchResult{
+			ID:         r.id,
+			Name:       meta.name,
+			Text:       meta.text,
+			BM25Score:  r.score,
+			DistanceKm: distKm,
+			Lat:        meta.lat,
+			Long:       meta.long,
+		})
+	}
+
+	// 5. Sort by requested field (already sorted by BM25; re-sort only if distance requested).
+	if gq.SortBy == "distance" {
+		sort.Slice(results, func(i, j int) bool {
+			if results[i].DistanceKm != results[j].DistanceKm {
+				return results[i].DistanceKm < results[j].DistanceKm
+			}
+			return results[i].ID < results[j].ID
+		})
+	}
+
+	return results
 }
 
-func searchHandler(tokenizedCorpus map[int][]string, avgDocsLength float64, invertedIndex map[string][]int) http.HandlerFunc {
+func searchHandler(tokenizedCorpus map[int][]string, avgDocsLength float64, invertedIndex map[string][]int, locationIndex map[int]docMeta, geohashIndex map[string][]int) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		params := r.URL.Query()
-		query := params["query"]
 
-		fmt.Printf("Received search query: %v\n", query)
+		queryText := params.Get("query")
+		if queryText == "" {
+			http.Error(w, "query is required", http.StatusBadRequest)
+			return
+		}
 
-		topSearchResults := getTopSearchResults(query[0], tokenizedCorpus, invertedIndex, avgDocsLength, 10, 0)
-		fmt.Fprintf(w, "Search results for: %v\n", query)
-		for _, res := range topSearchResults {
-			fmt.Fprintf(w, "%v\n", res)
+		latStr := params.Get("lat")
+		longStr := params.Get("long")
+		if latStr == "" || longStr == "" {
+			http.Error(w, "lat and long are required", http.StatusBadRequest)
+			return
+		}
+
+		userLat, err := strconv.ParseFloat(latStr, 64)
+		if err != nil {
+			http.Error(w, "invalid lat", http.StatusBadRequest)
+			return
+		}
+		userLong, err := strconv.ParseFloat(longStr, 64)
+		if err != nil {
+			http.Error(w, "invalid long", http.StatusBadRequest)
+			return
+		}
+
+		radiusKm := 0.0
+		if rs := params.Get("radius"); rs != "" {
+			radiusKm, err = strconv.ParseFloat(rs, 64)
+			if err != nil {
+				http.Error(w, "invalid radius", http.StatusBadRequest)
+				return
+			}
+		}
+
+		topK := 10
+		if ks := params.Get("k"); ks != "" {
+			if parsed, err := strconv.Atoi(ks); err == nil && parsed > 0 {
+				topK = parsed
+			}
+		}
+
+		sortBy := params.Get("sort")
+		if sortBy != "distance" {
+			sortBy = "relevancy"
+		}
+
+		gq := GeoQuery{
+			Text:     queryText,
+			UserLat:  userLat,
+			UserLong: userLong,
+			RadiusKm: radiusKm,
+			TopK:     topK,
+			SortBy:   sortBy,
+		}
+
+		results := getTopSearchResults(gq, tokenizedCorpus, invertedIndex, avgDocsLength, locationIndex, geohashIndex)
+
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		if err := json.NewEncoder(w).Encode(results); err != nil {
+			fmt.Printf("Error encoding response: %v\n", err)
 		}
 	}
 }
@@ -108,17 +220,14 @@ func invertedIndexHandler(invertedIndex map[string][]int) http.HandlerFunc {
 }
 
 func main() {
-	tokenizedCorpus, avgDocsLength, invertedIndex := getTokenizedCorpus(getCorpus("db"))
+	tokenizedCorpus, avgDocsLength, invertedIndex, locationIndex, geohashIndex := getTokenizedCorpus(getCorpus("file"))
 
-	// search endpoint
-	http.HandleFunc("/search", searchHandler(tokenizedCorpus, avgDocsLength, invertedIndex))
-
-	// get the inverted index (for debugging)
+	http.HandleFunc("/search", searchHandler(tokenizedCorpus, avgDocsLength, invertedIndex, locationIndex, geohashIndex))
 	http.HandleFunc("/inverted-index", invertedIndexHandler(invertedIndex))
-	fmt.Println("Server is starting!")
-	err := http.ListenAndServe(":8080", nil)
+	http.Handle("/", http.FileServer(http.Dir("./frontend/")))
 
-	if err != nil {
+	fmt.Println("Server starting on :8080")
+	if err := http.ListenAndServe(":8080", nil); err != nil {
 		fmt.Printf("Error starting server: %v\n", err)
 	}
 }

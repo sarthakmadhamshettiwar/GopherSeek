@@ -38,8 +38,18 @@ func getCorpusFromFile() []doc {
 				d.id = v
 			}
 		}
-		if tv, ok := item["text"].(string); ok {
-			d.text = tv
+		if v, ok := item["name"].(string); ok {
+			d.name = v
+		}
+		// "description" in JSON → doc.text for BM25
+		if v, ok := item["description"].(string); ok {
+			d.text = v
+		}
+		if v, ok := item["lat"].(float64); ok {
+			d.lat = v
+		}
+		if v, ok := item["long"].(float64); ok {
+			d.long = v
 		}
 		corpus = append(corpus, d)
 	}
@@ -67,10 +77,10 @@ func getCorpusFromDB() []doc {
 		fmt.Printf("Unable to connect to database: %v\n", err)
 		return []doc{}
 	}
+	defer conn.Close(ctx)
 
 	// Fetch all the documents from the table
-
-	allDocs, err := conn.Query(ctx, "SELECT id, text FROM docs;")
+	allDocs, err := conn.Query(ctx, "SELECT id, name, text, lat, long FROM docs;")
 	if err != nil {
 		fmt.Printf("Error fetching documents: %v\n", err)
 		return []doc{}
@@ -80,13 +90,12 @@ func getCorpusFromDB() []doc {
 	var corpus []doc
 	for allDocs.Next() {
 		var d doc
-		err := allDocs.Scan(&d.id, &d.text)
+		err := allDocs.Scan(&d.id, &d.name, &d.text, &d.lat, &d.long)
 		if err != nil {
 			fmt.Printf("Error scanning row: %v\n", err)
 			return []doc{}
 		}
 		corpus = append(corpus, d)
-		fmt.Printf("Fetched doc ID: %s\n", d.text) // Debugging log to confirm data retrieval
 	}
 
 	return corpus
@@ -104,20 +113,39 @@ func getCorpus(source string) []doc {
 	return nil
 }
 
-func getTokenizedCorpus(corpus []doc) (map[int][]string, float64, map[string][]int) {
-	tokenizedCorpus := make(map[int][]string)
-	totalDocsLength := 0
-	invertedIndex := make(map[string][]int)
+// geohashPrecision controls the pre-filter granularity.
+// Precision 4 ≈ 40×20km cells; 9-cell neighborhood covers ~120×60km, encompassing a city region.
+const geohashPrecision = 4
 
-	for _, doc := range corpus {
-		tokens := getTokenizedText(doc.text)
-		populateInvertedIndex(&invertedIndex, tokens, doc.id)
-		tokenizedCorpus[doc.id] = tokens
+func getTokenizedCorpus(corpus []doc) (map[int][]string, float64, map[string][]int, map[int]docMeta, map[string][]int) {
+	tokenizedCorpus := make(map[int][]string)
+	invertedIndex := make(map[string][]int)
+	locationIndex := make(map[int]docMeta)
+	geohashIndex := make(map[string][]int)
+	totalDocsLength := 0
+
+	for _, d := range corpus {
+		tokens := getTokenizedText(d.text)
+		populateInvertedIndex(&invertedIndex, tokens, d.id)
+		tokenizedCorpus[d.id] = tokens
 		totalDocsLength += len(tokens)
+
+		locationIndex[d.id] = docMeta{
+			lat:  d.lat,
+			long: d.long,
+			name: d.name,
+			text: d.text,
+		}
+
+		hash := encodeGeohash(d.lat, d.long, geohashPrecision)
+		geohashIndex[hash] = append(geohashIndex[hash], d.id)
 	}
 
+	if len(corpus) == 0 {
+		return tokenizedCorpus, 0, invertedIndex, locationIndex, geohashIndex
+	}
 	avgDocsLength := float64(totalDocsLength) / float64(len(corpus))
-	return tokenizedCorpus, avgDocsLength, invertedIndex
+	return tokenizedCorpus, avgDocsLength, invertedIndex, locationIndex, geohashIndex
 }
 
 func populateInvertedIndex(invertedIndex *map[string][]int, tokens []string, docID int) {
