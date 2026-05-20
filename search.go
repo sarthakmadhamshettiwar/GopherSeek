@@ -77,16 +77,9 @@ func getTopSearchResults(gq GeoQuery, tokenizedCorpus map[int][]string, inverted
 	// combine userHash + neighbourhood hashes
 	allCells := append(neighborHashes, userHash)
 
-	candidateSet := make(map[int]struct{})
+	var candidateIDs []int
 	for _, h := range allCells {
-		for _, id := range geohashIndex[h] {
-			candidateSet[id] = struct{}{}
-		}
-	}
-
-	candidateIDs := make([]int, 0, len(candidateSet))
-	for id := range candidateSet {
-		candidateIDs = append(candidateIDs, id)
+		candidateIDs = append(candidateIDs, geohashIndex[h]...)
 	}
 
 	// 2. BM25 on geo-filtered candidates only.
