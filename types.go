@@ -43,8 +43,8 @@ type SearchResult struct {
 	Long       float64 `json:"long"`
 }
 
+// Split the text into tokens
 func getTokenizedText(text string) []string {
-	// Split the text into tokens
 	tokens := strings.Fields(text)
 	return tokens
 }

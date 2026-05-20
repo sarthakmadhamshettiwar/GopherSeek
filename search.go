@@ -72,6 +72,8 @@ func getTopSearchResults(gq GeoQuery, tokenizedCorpus map[int][]string, inverted
 	// 1. Geohash pre-filter: collect candidate doc IDs within the neighborhood cells.
 	userHash := encodeGeohash(gq.UserLat, gq.UserLong, geohashPrecision)
 	neighborHashes := geohashNeighbors(userHash)
+
+	// combine userHash + neighbourhood hashes
 	allCells := append(neighborHashes, userHash)
 
 	candidateSet := make(map[int]struct{})
@@ -113,7 +115,7 @@ func getTopSearchResults(gq GeoQuery, tokenizedCorpus map[int][]string, inverted
 	// 4. Compute Haversine distance; apply optional radius hard-filter.
 	results := make([]SearchResult, 0, len(bm25Results))
 	for _, r := range bm25Results {
-		meta := locationIndex[r.id]
+		meta := locationIndex[r.id] // contains lat/long + other doc metadata for docId
 		distKm := haversineDistance(gq.UserLat, gq.UserLong, meta.lat, meta.long)
 		if gq.RadiusKm > 0 && distKm > gq.RadiusKm {
 			continue
@@ -223,8 +225,10 @@ func main() {
 	tokenizedCorpus, avgDocsLength, invertedIndex, locationIndex, geohashIndex := getTokenizedCorpus(getCorpus("file"))
 
 	http.HandleFunc("/search", searchHandler(tokenizedCorpus, avgDocsLength, invertedIndex, locationIndex, geohashIndex))
-	http.HandleFunc("/inverted-index", invertedIndexHandler(invertedIndex))
 	http.Handle("/", http.FileServer(http.Dir("./frontend/")))
+
+	// For dev
+	http.HandleFunc("/inverted-index", invertedIndexHandler(invertedIndex))
 
 	fmt.Println("Server starting on :8080")
 	if err := http.ListenAndServe(":8080", nil); err != nil {

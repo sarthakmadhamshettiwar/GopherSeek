@@ -117,11 +117,12 @@ func getCorpus(source string) []doc {
 // Precision 4 ≈ 40×20km cells; 9-cell neighborhood covers ~120×60km, encompassing a city region.
 const geohashPrecision = 4
 
-func getTokenizedCorpus(corpus []doc) (map[int][]string, float64, map[string][]int, map[int]docMeta, map[string][]int) {
-	tokenizedCorpus := make(map[int][]string)
-	invertedIndex := make(map[string][]int)
-	locationIndex := make(map[int]docMeta)
-	geohashIndex := make(map[string][]int)
+
+func getTokenizedCorpus(corpus []doc) (map[int][]string, float64, map[string][]int, map[int]docMeta, map[string][]int)  {
+	tokenizedCorpus := make(map[int][]string) // docID -> tokenized text
+	invertedIndex := make(map[string][]int) // token -> list of docIDs
+	locationIndex := make(map[int]docMeta) // docID -> document metadata
+	geohashIndex := make(map[string][]int) // geohash -> list of docIDs
 	totalDocsLength := 0
 
 	for _, d := range corpus {
@@ -148,6 +149,7 @@ func getTokenizedCorpus(corpus []doc) (map[int][]string, float64, map[string][]i
 	return tokenizedCorpus, avgDocsLength, invertedIndex, locationIndex, geohashIndex
 }
 
+// add docId for all the tokens in the current document to the inverted index
 func populateInvertedIndex(invertedIndex *map[string][]int, tokens []string, docID int) {
 	for _, token := range tokens {
 		(*invertedIndex)[token] = append((*invertedIndex)[token], docID)
