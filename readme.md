@@ -140,3 +140,33 @@ go test -bench=. -benchmem
 # Run a specific benchmark
 go test -bench=BenchmarkParallel -benchmem
 ```
+
+### Database connection benchmarks
+
+These benchmarks require `DOCS_DATABASE_URL` to be set in a `.env` file (see Installation). They compare three DB connection patterns under 100 concurrent queries.
+
+```bash
+# Run all three connection pattern benchmarks (cold burst)
+go test -bench=BenchmarkDB_DirectConnection_100Concurrent\|BenchmarkDB_SharedPool_100Concurrent\|BenchmarkDB_PoolPerCall_100Concurrent -benchmem -count=3 -timeout=10m
+
+# Run multi-wave benchmarks (5 waves of 100 concurrent queries)
+# This is where the pool's reuse advantage becomes visible
+go test -bench=BenchmarkDB_DirectConnection_MultiWave\|BenchmarkDB_SharedPool_MultiWave -benchmem -count=3 -timeout=15m
+
+# Run the pre-warmed pool benchmark (steady-state, simulates a running server)
+go test -bench=BenchmarkDB_SharedPool_Warmed -benchmem -count=3 -timeout=10m
+
+# Run all DB benchmarks at once
+go test -bench=BenchmarkDB -benchmem -count=3 -timeout=15m
+```
+
+**What each benchmark measures:**
+
+| Benchmark | What it simulates |
+|---|---|
+| `DirectConnection_100Concurrent` | 100 goroutines, each opens its own connection per query |
+| `SharedPool_100Concurrent` | One shared pool (MaxConns=100), 100 concurrent queries |
+| `PoolPerCall_100Concurrent` | Anti-pattern: a new pool created per call (for comparison) |
+| `DirectConnection_MultiWave` | 5 sequential bursts of 100 queries — no connection reuse |
+| `SharedPool_MultiWave` | 5 sequential bursts — connections from burst 1 reused in 2–5 |
+| `SharedPool_Warmed` | Pool pre-warmed before timing — pure steady-state query cost |
